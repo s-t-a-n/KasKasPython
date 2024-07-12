@@ -1,8 +1,8 @@
 # Reference
 
-## jasjas
+## kaskas
 
 ```{eval-rst}
-.. automodule:: jasjas
+.. automodule:: kaskas
    :members:
 ```

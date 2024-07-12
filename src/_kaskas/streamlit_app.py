@@ -1,7 +1,12 @@
+from _kaskas.kaskas_api import KasKasAPI
+from _kaskas.datacollector import MetricCollector
+
+from _kaskas.pyro_server import PyroServer
 import streamlit as st  # web development
 import streamlit_authenticator as stauth
 import numpy as np
-
+from typing import Optional
+from pathlib import Path
 import pandas as pd  # read csv, df manipulation
 import time  # to simulate a real time data, time loop
 from datetime import timedelta
@@ -10,8 +15,33 @@ import plotly.express as px  # interactive charts
 import cv2
 import resource
 import sys
+import Pyro5.api
 
-st.set_page_config(page_title="JasJas !", page_icon="🌱", layout="wide")
+st.set_page_config(page_title="KasKas !", page_icon="🌱", layout="wide")
+
+
+class Logger:
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def critical(msg):
+        print(f"CRITICAL:{msg}")
+
+    @staticmethod
+    def debug(msg):
+        print(f"DEBUG:{msg}")
+
+    @staticmethod
+    def info(msg):
+        print(f"INFO:{msg}")
+
+    @staticmethod
+    def warning(msg):
+        print(f"WARNING:{msg}")
+
+
+log = Logger()
 
 
 # def limit_memory(maxsize_MB: int):
@@ -23,47 +53,47 @@ st.set_page_config(page_title="JasJas !", page_icon="🌱", layout="wide")
 
 
 # ripped from https://stackoverflow.com/a/58314952
-def available_memory() -> int:
-    with open("/proc/meminfo", "r") as mem:
-        free_memory = 0
-        for i in mem:
-            sline = i.split()
-            if str(sline[0]) in ("MemFree:", "Buffers:", "Cached:"):
-                free_memory += int(sline[1])
-    return free_memory * 1024  # bytes
+# def available_memory() -> int:
+#     with open("/proc/meminfo", "r") as mem:
+#         free_memory = 0
+#         for i in mem:
+#             sline = i.split()
+#             if str(sline[0]) in ("MemFree:", "Buffers:", "Cached:"):
+#                 free_memory += int(sline[1])
+#     return free_memory * 1024  # bytes
 
 
-def memory_limit(percentage: int):
-    assert 0 < percentage <= 100
-    soft, hard = resource.getrlimit(resource.RLIMIT_AS)
-    available_memory_MB = available_memory() / 1024 / 1024
-    print(f"setting memory limit to {percentage}% of {available_memory_MB}MB")
-    new_soft = int(available_memory() * (percentage / 100.0))
-    resource.setrlimit(
-        resource.RLIMIT_AS,
-        (
-            new_soft,
-            hard,
-        ),
-    )
-    print(f"Set memory limit to {new_soft} (was {soft})")
+# def memory_limit(percentage: int):
+#     assert 0 < percentage <= 100
+#     soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+#     available_memory_MB = available_memory() / 1024 / 1024
+#     log.debug(f"setting memory limit to {percentage}% of {available_memory_MB}MB")
+#     new_soft = int(available_memory() * (percentage / 100.0))
+#     resource.setrlimit(
+#         resource.RLIMIT_AS,
+#         (
+#             new_soft,
+#             hard,
+#         ),
+#     )
+#     log.debug(f"Set memory limit to {new_soft} (was {soft})")
 
 
-def memory(percentage: int = 80):
-    def decorator(function):
-        def wrapper(*args, **kwargs):
-            memory_limit(percentage)
-            try:
-                return function(*args, **kwargs)
-            except MemoryError:
-                mem = available_memory() / 1024 / 1024 / 1024
-                print("Remain: %.2f GB" % mem)
-                sys.stderr.write("\n\nERROR: Memory Exception\n")
-                sys.exit(1)
-
-        return wrapper
-
-    return decorator
+# def memory(percentage: int = 80):
+#     def decorator(function):
+#         def wrapper(*args, **kwargs):
+#             memory_limit(percentage)
+#             try:
+#                 return function(*args, **kwargs)
+#             except MemoryError:
+#                 mem = available_memory() / 1024 / 1024 / 1024
+#                 log.debug("Remain: %.2f GB" % mem)
+#                 sys.stderr.write("\n\nERROR: Memory Exception\n")
+#                 sys.exit(1)
+#
+#         return wrapper
+#
+#     return decorator
 
 
 class Camera:
@@ -71,6 +101,9 @@ class Camera:
         mock_frame = np.empty((1920, 1080))
         mock_frame.fill(5)
         return mock_frame
+
+    def started(self) -> bool:
+        return False
 
 
 @st.cache_resource
@@ -145,19 +178,18 @@ def get_next_frame() -> np.ndarray:
 
 
 @st.cache_resource(ttl=timedelta(seconds=1))
-def get_next_dataframe() -> pd.DataFrame:
-    # return pd.read_csv("/home/stan/projects/JasJas/src/python/jasjas_data.csv", low_memory=True)
-    return pd.read_csv("/mnt/USB/jasjas_data.csv", low_memory=True)
+def get_next_dataframe(csv_path: Path) -> pd.DataFrame:
+    return pd.read_csv(csv_path, low_memory=True)
 
 
-def load_page(
-    display_interval: int, frames_per_visit: int, authenticator: stauth.Authenticate
-):
-    print("Client connected")
+def load_page(root: Path, api: KasKasAPI | Pyro5.api.Proxy,
+              display_interval: int, frames_per_visit: int, authenticator: Optional[stauth.Authenticate]
+              ):
+    log.debug("Client connected")
 
     header_left, title_col, header_right = st.columns(3)
     with title_col:
-        st.title("JasJas !")
+        st.title("KasKas !")
         st.subheader("accept no substitutes")
 
     with header_left:
@@ -172,13 +204,21 @@ def load_page(
                     st.markdown(message["content"])
 
             # React to user input
-            if prompt := st.chat_input("What is up?"):
-                # Display user message in chat message container
-                st.chat_message("user").markdown(prompt)
-                # Add user message to chat history
-                st.session_state.messages.append({"role": "user", "content": prompt})
+            if prompt := st.chat_input("module:command:arg1|arg2|argN"):
+                prompt_fmt = prompt.replace(':', "\\:")
 
-                response = f"Response: {prompt}"
+                # Display user message in chat message container
+                st.chat_message("user").markdown(prompt_fmt)
+                # Add user message to chat history
+                st.session_state.messages.append({"role": "user", "content": prompt_fmt})
+
+                api._pyroClaimOwnership()
+                # reply = api.request(module="FLU", function="waterNow", args=[f"{amount}"])
+                request_components = prompt.split(":")
+                reply = api.request(module=request_components[0], function=request_components[1],
+                                    *request_components[2:])
+
+                response = f"Response: {reply}"
                 # Display assistant response in chat message container
                 with st.chat_message("assistant"):
                     st.markdown(response)
@@ -187,20 +227,21 @@ def load_page(
                     {"role": "assistant", "content": response}
                 )
                 # messages = st.container()
-                # if prompt := st.chat_input("Go ahead! Talk to JasJas:"):
+                # if prompt := st.chat_input("Go ahead! Talk to KasKas:"):
                 #     messages.chat_message("user").write(prompt)
                 #     messages.chat_message("assistant").write(f"Echo: {prompt}")
 
-    with header_right:
-        if st.session_state["authentication_status"]:
-            authenticator.logout()
+    if authenticator:
+        with header_right:
+            if st.session_state["authentication_status"]:
+                authenticator.logout()
 
     # creating a single-element container.
     placeholder = st.empty()
 
     # To combat memory leakage, run for X times, then quit
     for i in range(frames_per_visit):
-        df = get_next_dataframe()
+        df = get_next_dataframe(root / MetricCollector.metrics_filename)
 
         # creating KPIs
         element_surface_temp = np.mean(df["HEATING_SURFACE_TEMP"].iloc[-2:])
@@ -227,31 +268,34 @@ def load_page(
                 # todo: some memory leaking is happening here
                 # likely the array is kept referenced within st.image
                 # on gh,
-                if get_camera().started:
+                if get_camera().started():
                     last_frame = get_next_frame()
                     st.image(last_frame, caption="Livefeed")
             with left_image:
                 st.image(
-                    "./Nietzsche_metPistool.jpg", width=420, caption="nature or notsure"
+                    str(root / "Nietzsche_metPistool.jpg"), width=420, caption="nature or notsure"
                 )
-            # with water_panel:
-            #     # st.image("./pexels-photo-28924.jpg", width=500, caption="Nature")
-            #     with st.container():
-            #         left_column, middle_column, right_column = st.columns(3)
+            with water_panel:
+                # st.image("./pexels-photo-28924.jpg", width=500, caption="Nature")
+                with st.container():
+                    left_column, middle_column, right_column = st.columns(3)
 
-            #         def start_injection():
-            #             print("starting injection")
+                    def start_injection(amount: int):
+                        print("starting injection")
+                        api._pyroClaimOwnership()
+                        # reply = api.request(module="FLU", function="waterNow", args=[f"{amount}"])
+                        reply = api.request(module="MTC", function="getMetrics")
+                        st.popover(label=str(reply))
 
-            #         with left_column:
-            #           pass
-            #         with right_column:
-            #             number = st.number_input("Amount in milliliter",value=100, max_value=500)
+                    with left_column:
+                        pass
+                    with right_column:
+                        number = st.number_input("Amount in milliliter", value=100, max_value=500)
 
-            #             if st.button("Water plants",on_click=start_injection):
-            #                 pass
-            #             else:
-            #                 pass
-            #     pass
+                        if st.button("Water plants", on_click=start_injection, args=[number]):
+                            pass
+                        else:
+                            pass
 
             # create three columns
             kpi1, kpi2 = st.columns(2)
@@ -299,8 +343,8 @@ def load_page(
             fig_col3, fig_col4 = st.columns(2)
             with fig_col3:
                 st.markdown("### Climate  humidity")
-                fig3 = px.area(
-                    data_frame=df, y=["CLIMATE_HUMIDITY", "CLIMATE_FAN"], x="TIMESTAMP"
+                fig3 = px.line(
+                    data_frame=df, y=["CLIMATE_HUMIDITY", "CLIMATE_FAN", "CLIMATE_HUMIDITY_SETPOINT"], x="TIMESTAMP"
                 )
                 st.write(fig3)
             with fig_col4:
@@ -324,61 +368,75 @@ def load_page(
 import yaml
 from yaml.loader import SafeLoader
 
-with open("auth.yml") as file:
-    config = yaml.load(file, Loader=SafeLoader)
 
-authenticator = stauth.Authenticate(
-    config["credentials"],
-    config["cookie"]["name"],
-    config["cookie"]["key"],
-    config["cookie"]["expiry_days"],
-    config["pre-authorized"],
-)
+def do_streamlit_session(root: Path, api_id: str, auth_file: Optional[Path] = None):
+    authenticator = None
+    if auth_file:
+        with open(auth_file) as file:
+            auth_config = yaml.load(file, Loader=SafeLoader)
 
-if not st.session_state["authentication_status"]:
-    name, authentication_status, username = authenticator.login()
+        authenticator = stauth.Authenticate(
+            auth_config["credentials"],
+            auth_config["cookie"]["name"],
+            auth_config["cookie"]["key"],
+            auth_config["cookie"]["expiry_days"],
+            auth_config["pre-authorized"],
+        )
 
-# try:
-#     email_of_registered_user, username_of_registered_user, name_of_registered_user = authenticator.register_user(pre_authorization=False)
-#     if email_of_registered_user:
-#         st.success('User registered successfully')
-# except Exception as e:
-#     st.error(e)
+        if not st.session_state["authentication_status"]:
+            name, authentication_status, username = authenticator.login()
+    else:
+        log.warning("No auth_file passed in. No authentication will be enforced.")
 
-# if st.session_state["authentication_status"]:
-#     try:
-#         if authenticator.reset_password(st.session_state["username"]):
-#             st.success('Password modified successfully')
-#     except Exception as e:
-#         st.error(e)
+    # try:
+    #     email_of_registered_user, username_of_registered_user, name_of_registered_user = authenticator.register_user(pre_authorization=False)
+    #     if email_of_registered_user:
+    #         st.success('User registered successfully')
+    # except Exception as e:
+    #     st.error(e)
 
-with open("auth.yml", "w") as file:
-    yaml.dump(config, file, default_flow_style=False)
+    # if st.session_state["authentication_status"]:
+    #     try:
+    #         if authenticator.reset_password(st.session_state["username"]):
+    #             st.success('Password modified successfully')
+    #     except Exception as e:
+    #         st.error(e)
 
-# if st.session_state["authentication_status"]:
-#     try:
-#         if authenticator.update_user_details(st.session_state["username"]):
-#             st.success('Entries updated successfully')
-#     except Exception as e:
-#         st.error(e)
+    # with open(auth_file, "w") as file:
+    #     yaml.dump(auth_config, file, default_flow_style=False)
 
-if st.session_state["authentication_status"]:
-    # authenticator.logout()
-    # st.write(f'Welcome *{st.session_state["name"]}*')
-    load_page(display_interval=10, frames_per_visit=300, authenticator=authenticator)
-    st.rerun()
-elif st.session_state["authentication_status"] is False:
-    st.error("Username/password is incorrect")
-elif st.session_state["authentication_status"] is None:
-    st.warning("Please enter your username and password")
+    # if st.session_state["authentication_status"]:
+    #     try:
+    #         if authenticator.update_user_details(st.session_state["username"]):
+    #             st.success('Entries updated successfully')
+    #     except Exception as e:
+    #         st.error(e)
 
-# load_page(display_interval=10,frames_per_visit=30)
+    if not auth_file or st.session_state["authentication_status"]:
+        # authenticator.logout()
+        # st.write(f'Welcome *{st.session_state["name"]}*')
 
-# try:
-#     load_page(display_interval=10,frames_per_visit=30)
-# except MemoryError:
-#     print("Caught memory error")
-# except:
-#     print("Caught unknown exception")
+        api = PyroServer.proxy_for(f"PYRONAME:{api_id}")
+        load_page(root=root, api=api, display_interval=10, frames_per_visit=300, authenticator=authenticator)
+        st.rerun()
+    elif st.session_state["authentication_status"] is False:
+        st.error("Username/password is incorrect")
+    elif st.session_state["authentication_status"] is None:
+        st.warning("Please enter your username and password")
 
-print("End of session. Scheduling rerun.")
+    # load_page(display_interval=10,frames_per_visit=30)
+
+    # try:
+    #     load_page(display_interval=10,frames_per_visit=30)
+    # except MemoryError:
+    #     print("Caught memory error")
+    # except:
+    #     print("Caught unknown exception")
+
+    log.debug("End of session. Scheduling rerun.")
+
+
+import typer
+
+if __name__ == "__main__":
+    typer.run(do_streamlit_session)

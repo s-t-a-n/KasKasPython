@@ -1,10 +1,10 @@
-""" main entrypoint for `jasjas`. """
+""" main entrypoint for `kaskas`. """
 
-from _jasjas.app.app import Application as JasJasApplication
+from _kaskas.app import Application as KasKasApplication
 
 
 def main():
-    JasJasApplication().run()
+    KasKasApplication().run()
 
 
 if __name__ == "__main__":

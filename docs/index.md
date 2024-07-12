@@ -18,5 +18,5 @@ usage
 reference
 contributing
 License <license>
-Changelog <https://github.com/s-t-a-n/jasjas/releases>
+Changelog <https://github.com/s-t-a-n/kaskas/releases>
 ```

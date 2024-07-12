@@ -1,20 +1,20 @@
-import logging
+from _kaskas.log import log
 
-log = logging.getLogger(__name__)
 from pathlib import Path
 from types import TracebackType
 from typing import *
 import os
 from rich import print
 from rich.prompt import Prompt
+from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from platformdirs import user_data_dir
 from typer import Typer
 import typer
 from typing_extensions import Annotated
 
-from _jasjas.jasjas import Jasjas
-from _jasjas.utils.singleton import Singleton
+from _kaskas.daemon import Daemon
+from _kaskas.utils.singleton import Singleton
 
 
 def app_author() -> str:
@@ -22,7 +22,7 @@ def app_author() -> str:
 
 
 def app_name() -> str:
-    return "jasjas"
+    return "kaskas"
 
 
 def app_version() -> str:
@@ -50,7 +50,7 @@ def app_powered_by() -> str:
 
 
 def app_tagline() -> str:
-    return f"JasJas API by [red]{app_author()}[/red]. {app_powered_by()}"
+    return f"KasKas API by [red]{app_author()}[/red]. {app_powered_by()}"
 
 
 def app_line() -> str:
@@ -115,7 +115,6 @@ def app_header_centered(columns: int) -> str:
 
     centered_line = " " * extra_spaces + "-" * app_banner_length() + " " * extra_spaces
 
-    # extra_spaces = int((columns - len(app_tagline())) / 2)
     centered_tag_line = " " * extra_spaces + app_tagline() + " " * extra_spaces
 
     return centered_banner + "\n" + centered_line + "\n" + centered_tag_line + "\n"
@@ -140,65 +139,123 @@ def app_header() -> str:
     return s
 
 
-def inject_jasjas(app: typer.Typer, kk: Jasjas):
+def inject_kaskas(app: typer.Typer, daemon: Daemon):
     """Inject all typer entrypoints."""
-
-    from rich.console import Console
-
-    output_console = Console()
-    logging_console = Console(stderr=True)
 
     @app.command("prompt")
     def prompt(
-            request: Annotated[Optional[str], typer.Argument(..., help="Module:Command:Optional[Argument]")] = None,
+            remote: Annotated[bool, typer.Option(help=".")] = False,
+            remote_host: Annotated[str, typer.Option(help=".")] = None,
+            request: Annotated[str, typer.Argument(help="module:command:arg1|arg2|..")] = None,
     ):
         """[blue]Set[/blue] a value for a key."""
 
         def print_help():
             print(f"Request should be formatted as 'MODULE:COMMAND:ARG|ARG'")
 
-        print("JasJas prompt. Enter 'q' to quit");
-        while (input := Prompt.ask("$")) != "q":
+        history = []
+
+        def process_request(input: str):
             if not isinstance(input, str):
                 print_help()
-                continue
+                return
+
+            arrow_up_keycode = "\x1b[A"
+            if input == arrow_up_keycode:
+                input = history[-1]
+
             args = input.split(":")
             if len(args) < 2:
                 print_help()
-                continue
-            response = kk.api.request(args[0], args[1], *args[2:])
-            print(response)
+                return
+            response = daemon.api.request(module=args[0], function=args[1], args=args[2:])
+            print(str(response))
+            history.append(input)
 
-        logging_console.print("[bold green]ok")
+        daemon.launch_api(remote=remote, remote_host=remote_host)
+
+        if request:
+            process_request(request)
+            return
+
+        print("[bold red]KasKas[/bold red] prompt. Enter 'q' to quit, Press ↑ and Enter to repeat last command");
+
+        while (input := Prompt.ask("$")) != "q":
+            process_request(input)
 
     @app.command("daemon")
-    def start_daemon():
+    def start_daemon(remote: Annotated[bool, typer.Option(help=".")] = False,
+                     remote_host: Annotated[str, typer.Option(help=".")] = None, ):
         """[blue]Set[/blue] a value for a key."""
-        logging_console.print("[bold green]ok")
+
+        with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                transient=True,
+        ) as progress:
+            p = progress.add_task(description="Launching API...", total=None)
+            daemon.launch_api(remote=remote, remote_host=remote_host)
+            progress.stop_task(p)
+
+            p = progress.add_task(description="Launching collector...", total=None)
+            daemon.launch_collector()
+            progress.stop_task(p)
+
+            p = progress.add_task(description="Launching web frontend...", total=None)
+            daemon.launch_webapp()
+            progress.stop_task(p)
+
+        print("Daemon [bold green] ok[/bold green]. Running...")
+        daemon.wait()
+
+    @app.command("user-directory", help="Prints user directory")
+    def user_directory():
+        print(daemon.root_dir)
 
 
 class Application(metaclass=Singleton):
-    _jasjas: Jasjas
+    _daemon: Daemon
 
     def __init__(self, root: Path = app_userdir(), loglevel: str = "WARNING"):
         self.setup_logging(loglevel)
-        self._jasjas = Jasjas(root=root)
+
+        if not root.exists() or not root.is_dir():
+            os.makedirs(root, exist_ok=True)
+
+        self._daemon = Daemon(root=root)
+
+        import signal
+        import sys
+
+        def signal_handler(sig, frame):
+            self._daemon.shutdown()
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
 
     @staticmethod
     def setup_logging(loglevel: str):
-        import logging
-        import os
-
-        logging.basicConfig(level=os.environ.get("LOGLEVEL", loglevel))
+        pass
+        # import logging
+        # import os
+        # from rich.logging import RichHandler
+        #
+        # fmt = "%(message)s"
+        # loglevel = os.environ.get('LOGLEVEL', loglevel).upper()
+        # logging.basicConfig(
+        #     level=loglevel, format=fmt, datefmt="[%X]", handlers=[RichHandler()]
+        # )
 
     @property
     def _typer_app(self) -> Typer:
         app = Typer(no_args_is_help=True, help=app_header(), rich_markup_mode="rich")
-        inject_jasjas(app=app, kk=self._jasjas)
+        inject_kaskas(app=app, daemon=self._daemon)
         return app
 
     def run(self):
         """Run the application"""
+
+        import logging
 
         if logging.getLogger().level in [logging.DEBUG, logging.INFO]:
             import sys

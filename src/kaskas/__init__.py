@@ -1,3 +1,3 @@
-""" Jasjas package """
+""" Kaskas package """
 
 __all__ = []

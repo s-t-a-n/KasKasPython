@@ -1,7 +1,7 @@
 # Usage
 
 [//]: # "```{eval-rst}"
-[//]: # ".. typer:: jasjas.__main__.app:main"
-[//]: # "    :prog: jasjas"
+[//]: # ".. typer:: kaskas.__main__.app:main"
+[//]: # "    :prog: kaskas"
 [//]: # "    :nested: full"
 [//]: # "```"

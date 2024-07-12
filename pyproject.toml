@@ -1,19 +1,20 @@
 [tool.poetry]
-name = "jasjas"
+name = "kaskas"
 version = "0.0.0"
-description = "Jasjas"
+description = "Kaskas"
 authors = ["Stan Verschuuren <31728406+s-t-a-n@users.noreply.github.com>"]
 license = "MIT"
 readme = "README.md"
-homepage = "https://github.com/s-t-a-n/jasjas"
-repository = "https://github.com/s-t-a-n/jasjas"
-documentation = "https://jasjas.readthedocs.io"
+homepage = "https://github.com/s-t-a-n/kaskas"
+repository = "https://github.com/s-t-a-n/kaskas"
+documentation = "https://kaskas.readthedocs.io"
 classifiers = [
     "Development Status :: 1 - Planning",
 ]
+#packages = [{ include = "*", from = "src" }]
 
 [tool.poetry.urls]
-Changelog = "https://github.com/s-t-a-n/jasjas/releases"
+Changelog = "https://github.com/s-t-a-n/kaskas/releases"
 
 [tool.poetry.dependencies]
 python = "^3.10"
@@ -22,14 +23,15 @@ streamlit = "^1.36.0"
 plotly = "^5.22.0"
 opencv-python = "^4.10.0.84"
 streamlit-authenticator = "^0.3.2"
-pizco = "^0.1"
 pyserial = "^3.5"
 zmq = "^0.0.0"
+pyro5 = "^5.15"
+rich = "^13.7.1"
 
 [tool.poetry.dev-dependencies]
 Pygments = ">=2.10.0"
 black = ">=21.10b0"
-coverage = {extras = ["toml"], version = ">=6.2"}
+coverage = { extras = ["toml"], version = ">=6.2" }
 darglint = ">=1.8.1"
 flake8 = ">=4.0.1"
 flake8-bandit = ">=2.1.2"
@@ -47,7 +49,7 @@ safety = ">=1.10.3"
 typeguard = ">=2.13.3"
 
 [tool.poetry.scripts]
-jasjas = "jasjas.__main__:main"
+kaskas = "kaskas.__main__:main"
 
 [tool.coverage.paths]
 source = ["src", "*/site-packages"]
@@ -55,7 +57,7 @@ tests = ["tests", "*/tests"]
 
 [tool.coverage.run]
 branch = true
-source = ["_jasjas", "jasjas", "tests"]
+source = ["_kaskas", "kaskas", "tests"]
 
 [tool.coverage.report]
 show_missing = true

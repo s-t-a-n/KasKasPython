@@ -2,6 +2,7 @@ import glob
 from typing import List
 from serial import Serial
 from serial import SerialTimeoutException
+from serial import SerialException
 
 
 def find_serial_ports() -> List[str]:
@@ -17,14 +18,16 @@ def find_serial_ports() -> List[str]:
     return res
 
 
+def has_available_serial_ports() -> bool:
+    return len(find_serial_ports()) > 0
+
+
 def open_next_available_serial(baudrate: int = 115200, timeout: float = 1.5) -> Serial:
-    ports = find_serial_ports()
-    assert len(ports) > 0, "No serial ports available"
-    for port in ports:
+    for port in find_serial_ports():
         try:
             ser = Serial(port, baudrate, timeout=timeout)
             if ser.is_open:
                 return ser
         except SerialTimeoutException:
             pass
-    raise RuntimeError("Unable to open serial port")
+    raise SerialException("No serial ports available")

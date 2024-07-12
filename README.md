@@ -1,23 +1,23 @@
-# Jasjas
+# Kaskas
 
-[![PyPI](https://img.shields.io/pypi/v/jasjas.svg)][pypi_]
-[![Status](https://img.shields.io/pypi/status/jasjas.svg)][status]
-[![Python Version](https://img.shields.io/pypi/pyversions/jasjas)][python version]
-[![License](https://img.shields.io/pypi/l/jasjas)][license]
+[![PyPI](https://img.shields.io/pypi/v/kaskas.svg)][pypi_]
+[![Status](https://img.shields.io/pypi/status/kaskas.svg)][status]
+[![Python Version](https://img.shields.io/pypi/pyversions/kaskas)][python version]
+[![License](https://img.shields.io/pypi/l/kaskas)][license]
 
-[![Read the documentation at https://jasjas.readthedocs.io/](https://img.shields.io/readthedocs/jasjas/latest.svg?label=Read%20the%20Docs)][read the docs]
-[![Tests](https://github.com/s-t-a-n/jasjas/workflows/Tests/badge.svg)][tests]
-[![Codecov](https://codecov.io/gh/s-t-a-n/jasjas/branch/main/graph/badge.svg)][codecov]
+[![Read the documentation at https://kaskas.readthedocs.io/](https://img.shields.io/readthedocs/kaskas/latest.svg?label=Read%20the%20Docs)][read the docs]
+[![Tests](https://github.com/s-t-a-n/kaskas/workflows/Tests/badge.svg)][tests]
+[![Codecov](https://codecov.io/gh/s-t-a-n/kaskas/branch/main/graph/badge.svg)][codecov]
 
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)][pre-commit]
 [![Black](https://img.shields.io/badge/code%20style-black-000000.svg)][black]
 
-[pypi_]: https://pypi.org/project/jasjas/
-[status]: https://pypi.org/project/jasjas/
-[python version]: https://pypi.org/project/jasjas
-[read the docs]: https://jasjas.readthedocs.io/
-[tests]: https://github.com/s-t-a-n/jasjas/actions?workflow=Tests
-[codecov]: https://app.codecov.io/gh/s-t-a-n/jasjas
+[pypi_]: https://pypi.org/project/kaskas/
+[status]: https://pypi.org/project/kaskas/
+[python version]: https://pypi.org/project/kaskas
+[read the docs]: https://kaskas.readthedocs.io/
+[tests]: https://github.com/s-t-a-n/kaskas/actions?workflow=Tests
+[codecov]: https://app.codecov.io/gh/s-t-a-n/kaskas
 [pre-commit]: https://github.com/pre-commit/pre-commit
 [black]: https://github.com/psf/black
 
@@ -31,10 +31,10 @@
 
 ## Installation
 
-You can install _Jasjas_ via [pip] from [PyPI]:
+You can install _Kaskas_ via [pip] from [PyPI]:
 
 ```console
-$ pip install jasjas
+$ pip install kaskas
 ```
 
 ## Usage
@@ -49,7 +49,7 @@ To learn more, see the [Contributor Guide].
 ## License
 
 Distributed under the terms of the [MIT license][license],
-_Jasjas_ is free and open source software.
+_Kaskas_ is free and open source software.
 
 ## Issues
 
@@ -63,11 +63,11 @@ This project was generated from [@cjolowicz]'s [Hypermodern Python Cookiecutter]
 [@cjolowicz]: https://github.com/cjolowicz
 [pypi]: https://pypi.org/
 [hypermodern python cookiecutter]: https://github.com/cjolowicz/cookiecutter-hypermodern-python
-[file an issue]: https://github.com/s-t-a-n/jasjas/issues
+[file an issue]: https://github.com/s-t-a-n/kaskas/issues
 [pip]: https://pip.pypa.io/
 
 <!-- github-only -->
 
-[license]: https://github.com/s-t-a-n/jasjas/blob/main/LICENSE
-[contributor guide]: https://github.com/s-t-a-n/jasjas/blob/main/CONTRIBUTING.md
-[command-line reference]: https://jasjas.readthedocs.io/en/latest/usage.html
+[license]: https://github.com/s-t-a-n/kaskas/blob/main/LICENSE
+[contributor guide]: https://github.com/s-t-a-n/kaskas/blob/main/CONTRIBUTING.md
+[command-line reference]: https://kaskas.readthedocs.io/en/latest/usage.html
