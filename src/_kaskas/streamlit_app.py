@@ -1,23 +1,46 @@
-from _kaskas.kaskas_api import KasKasAPI
-from _kaskas.datacollector import MetricCollector
-
-from _kaskas.pyro_server import PyroServer
-import streamlit as st  # web development
+import streamlit as st
 import streamlit_authenticator as stauth
 import numpy as np
-from typing import Optional
-from pathlib import Path
-import pandas as pd  # read csv, df manipulation
-import time  # to simulate a real time data, time loop
-from datetime import timedelta
-from datetime import datetime
-import plotly.express as px  # interactive charts
+import pandas as pd
+import plotly.express as px
+from datetime import datetime, timedelta
 import cv2
-import resource
-import sys
-import Pyro5.api
+from pathlib import Path
+import typer
+import yaml
+from yaml.loader import SafeLoader
+from typing import Optional
+from _kaskas.pyro_server import PyroServer
+from _kaskas.utils.filelock import FileLock
+from _kaskas.datacollector import TimeSeriesCollector
 
 st.set_page_config(page_title="KasKas !", page_icon="🌱", layout="wide")
+
+# Initialize session state for authentication
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+
+def show_login_form(auth_file: Path):
+    """Display the login form and handle authentication."""
+    try:
+        with open(auth_file, "r") as f:
+            auth_config = yaml.load(f, Loader=SafeLoader)
+        authenticator = stauth.Authenticate(
+            auth_config["credentials"],
+            auth_config["cookie"]["name"],
+            auth_config["cookie"]["key"],
+            auth_config["cookie"]["expiry_days"],
+            auth_config["pre-authorized"],
+        )
+
+        if not st.session_state["authentication_status"]:
+            Logger.debug("Authenticating to Streamlit...")
+            name, authentication_status, username = authenticator.login()
+        else:
+            Logger.debug("User was already authenticated")
+    except Exception as e:
+        st.error(f"Error reading authentication file: {e}")
 
 
 class Logger:
@@ -41,61 +64,6 @@ class Logger:
         print(f"WARNING:{msg}")
 
 
-log = Logger()
-
-
-# def limit_memory(maxsize_MB: int):
-#     print(f"setting memory limit to {maxsize_MB}MB")
-#     print(f"setting memory limit to {int(maxsize_MB * 1e6)}B")
-#     soft, hard = resource.getrlimit(resource.RLIMIT_AS)
-#     resource.setrlimit(resource.RLIMIT_AS, (int(maxsize_MB * 1e6), hard))
-# limit_memory(1600)
-
-
-# ripped from https://stackoverflow.com/a/58314952
-# def available_memory() -> int:
-#     with open("/proc/meminfo", "r") as mem:
-#         free_memory = 0
-#         for i in mem:
-#             sline = i.split()
-#             if str(sline[0]) in ("MemFree:", "Buffers:", "Cached:"):
-#                 free_memory += int(sline[1])
-#     return free_memory * 1024  # bytes
-
-
-# def memory_limit(percentage: int):
-#     assert 0 < percentage <= 100
-#     soft, hard = resource.getrlimit(resource.RLIMIT_AS)
-#     available_memory_MB = available_memory() / 1024 / 1024
-#     log.debug(f"setting memory limit to {percentage}% of {available_memory_MB}MB")
-#     new_soft = int(available_memory() * (percentage / 100.0))
-#     resource.setrlimit(
-#         resource.RLIMIT_AS,
-#         (
-#             new_soft,
-#             hard,
-#         ),
-#     )
-#     log.debug(f"Set memory limit to {new_soft} (was {soft})")
-
-
-# def memory(percentage: int = 80):
-#     def decorator(function):
-#         def wrapper(*args, **kwargs):
-#             memory_limit(percentage)
-#             try:
-#                 return function(*args, **kwargs)
-#             except MemoryError:
-#                 mem = available_memory() / 1024 / 1024 / 1024
-#                 log.debug("Remain: %.2f GB" % mem)
-#                 sys.stderr.write("\n\nERROR: Memory Exception\n")
-#                 sys.exit(1)
-#
-#         return wrapper
-#
-#     return decorator
-
-
 class Camera:
     def capture_array(self) -> np.ndarray:
         mock_frame = np.empty((1920, 1080))
@@ -108,60 +76,13 @@ class Camera:
 
 @st.cache_resource
 def get_camera() -> Camera:
-    # picam2 = Picamera2()
-    # # >>> pprint(picam2.sensor_modes)
-    # # [{'bit_depth': 10,
-    # #   'crop_limits': (16, 0, 2560, 1920),
-    # #   'exposure_limits': (134, 1103219, None),
-    # #   'format': SGBRG10_CSI2P,
-    # #   'fps': 58.92,
-    # #   'size': (640, 480),
-    # #   'unpacked': 'SGBRG10'},
-    # #  {'bit_depth': 10,
-    # #   'crop_limits': (0, 0, 2592, 1944),
-    # #   'exposure_limits': (92, 760636, None),
-    # #   'format': SGBRG10_CSI2P,
-    # #   'fps': 43.25,
-    # #   'size': (1296, 972),
-    # #   'unpacked': 'SGBRG10'},
-    # #  {'bit_depth': 10,
-    # #   'crop_limits': (348, 434, 1928, 1080),
-    # #   'exposure_limits': (118, 969249, None),
-    # #   'format': SGBRG10_CSI2P,
-    # #   'fps': 30.62,
-    # #   'size': (1920, 1080),
-    # #   'unpacked': 'SGBRG10'},
-    # #  {'bit_depth': 10,
-    # #   'crop_limits': (0, 0, 2592, 1944),
-    # #   'exposure_limits': (130, 1064891, None),
-    # #   'format': SGBRG10_CSI2P,
-    # #   'fps': 15.63,
-    # #   'size': (2592, 1944),
-    # #   'unpacked': 'SGBRG10'}]
-    # mode = picam2.sensor_modes[3]
-    #
-    # picam2.configure(
-    #     picam2.create_preview_configuration(
-    #         main={"format": "XRGB8888", "size": (640, 480)},
-    #         sensor={"output_size": mode["size"], "bit_depth": mode["bit_depth"]},
-    #     )
-    # )
-    # if picam2.started:
-    #     picam2.stop()
-    # picam2.start()
-    # return picam2
-
-    camera = Camera()
-    return camera
+    return Camera()
 
 
 @st.cache_resource(ttl=timedelta(seconds=10))
 def get_next_frame() -> np.ndarray:
     next_frame = get_camera().capture_array()
-
-    # Get current date and time
     date_time = str(datetime.now())
-
     font = cv2.FONT_HERSHEY_SIMPLEX
     x = next_frame.shape[1]
     y = next_frame.shape[0]
@@ -169,8 +90,6 @@ def get_next_frame() -> np.ndarray:
     fontscale = 0.5
     color_bgr = (0, 51, 153)
     thickness = 1
-
-    # write the date time in the video frame
     next_frame = cv2.putText(
         next_frame, date_time, origin, font, fontscale, color_bgr, thickness, cv2.LINE_4
     )
@@ -178,265 +97,194 @@ def get_next_frame() -> np.ndarray:
 
 
 @st.cache_resource(ttl=timedelta(seconds=1))
-def get_next_dataframe(csv_path: Path) -> pd.DataFrame:
-    return pd.read_csv(csv_path, low_memory=True)
+def get_next_dataframe(csv_path: Path, csv_lock_path: Path) -> pd.DataFrame:
+    lock = FileLock(csv_lock_path)
+    with lock:
+        return pd.read_csv(csv_path, low_memory=True)
 
 
-def load_page(root: Path, api: KasKasAPI | Pyro5.api.Proxy,
-              display_interval: int, frames_per_visit: int, authenticator: Optional[stauth.Authenticate]
-              ):
-    log.debug("Client connected")
+def filter_data(df: pd.DataFrame, hours: int) -> pd.DataFrame:
+    """Filter the DataFrame based on the number of hours."""
+    if hours == 'all':
+        return df
+    end_time = datetime.now()
+    start_time = end_time - timedelta(hours=hours)
+    return df[df["TIMESTAMP"] >= start_time.strftime("%Y-%m-%d %H:%M:%S.%f")]
 
-    header_left, title_col, header_right = st.columns(3)
-    with title_col:
-        st.title("KasKas !")
-        st.subheader("accept no substitutes")
 
-    with header_left:
-        with st.popover("API"):
-            # Initialize chat history
-            if "messages" not in st.session_state:
-                st.session_state.messages = []
+def display_kpi(title: str, current_value: float, avg_value: float, y_data: list, df: pd.DataFrame, ylabel: str,
+                panel_id: str, time_range: str):
+    """Display a KPI panel with a title, current reading, and a graph."""
+    with st.container(border=True):
+        # KPI display
+        st.markdown(f"### {title}")
+        kpi_col1, kpi_col2 = st.columns([1, 3])
+        with kpi_col1:
+            st.metric(label=title, value=round(current_value, 2), delta=round(current_value - avg_value, 2))
 
-            # Display chat messages from history on streamlit rerun
-            for message in st.session_state.messages:
-                with st.chat_message(message["role"]):
-                    st.markdown(message["content"])
+        hours_map = {
+            "All Data": 'all',
+            "Last 24 Hours": 24,
+            "Last 6 Hours": 6,
+            "Last 1 Hour": 1
+        }
 
-            # React to user input
-            if prompt := st.chat_input("module:command:arg1|arg2|argN"):
-                prompt_fmt = prompt.replace(':', "\\:")
+        hours = hours_map[time_range]
+        filtered_df = filter_data(df, hours)
 
-                # Display user message in chat message container
-                st.chat_message("user").markdown(prompt_fmt)
-                # Add user message to chat history
-                st.session_state.messages.append({"role": "user", "content": prompt_fmt})
+        try:
+            fig = px.line(data_frame=filtered_df, y=y_data, x="TIMESTAMP", labels={"TIMESTAMP": "Time", ylabel: ylabel})
+            st.plotly_chart(fig, use_container_width=True)
+        except Exception as e:
+            Logger.debug(f"Error creating plot: {e}")
+            st.error("Failed to create plot.")
 
-                api._pyroClaimOwnership()
-                # reply = api.request(module="FLU", function="waterNow", args=[f"{amount}"])
-                request_components = prompt.split(":")
-                reply = api.request(module=request_components[0], function=request_components[1],
-                                    *request_components[2:])
 
-                response = f"Response: {reply}"
-                # Display assistant response in chat message container
-                with st.chat_message("assistant"):
-                    st.markdown(response)
-                # Add assistant response to chat history
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": response}
-                )
-                # messages = st.container()
-                # if prompt := st.chat_input("Go ahead! Talk to KasKas:"):
-                #     messages.chat_message("user").write(prompt)
-                #     messages.chat_message("assistant").write(f"Echo: {prompt}")
-
-    if authenticator:
-        with header_right:
-            if st.session_state["authentication_status"]:
-                authenticator.logout()
-
-    # creating a single-element container.
+def load_page(root: Path, api: PyroServer | PyroServer.Proxy):
+    """Load and display the main page with real-time updates."""
     placeholder = st.empty()
 
-    # To combat memory leakage, run for X times, then quit
-    for i in range(frames_per_visit):
-        df = get_next_dataframe(root / MetricCollector.metrics_filename)
+    # Fetch the dataframe once for the whole page
+    df_lock_path = root / TimeSeriesCollector.timeseries_lock_filename
+    df = get_next_dataframe(root / TimeSeriesCollector.timeseries_filename, df_lock_path)
 
-        # creating KPIs
-        element_surface_temp = np.mean(df["HEATING_SURFACE_TEMP"].iloc[-2:])
-        climate_setpoint = np.mean(df["HEATING_SETPOINT"].iloc[-1:])
-        climate_temp = np.mean(df["CLIMATE_TEMP"].iloc[-2:])
-        climate_humidity = np.mean(df["CLIMATE_HUMIDITY"].iloc[-2:])
-        soil_moisture = np.mean(df["SOIL_MOISTURE"].iloc[-2:])
+    if df.empty:
+        st.warning("No data available.")
+        return
 
-        avg_element_surface_temp = np.mean(df["HEATING_SURFACE_TEMP"].iloc[-20:])
-        avg_climate_temp = np.mean(df["CLIMATE_TEMP"].iloc[-20:])
-        avg_climate_humidity = np.mean(df["CLIMATE_HUMIDITY"].iloc[-20:])
-        avg_soil_moisture = np.mean(df["SOIL_MOISTURE"].iloc[-20:])
+    # Create sidebar with time range selector
+    st.sidebar.header("Time Range Selector")
+    time_range = st.sidebar.radio(
+        "Select time range:",
+        ["All Data", "Last 24 Hours", "Last 6 Hours", "Last 1 Hour"],
+        key="time_range_selector"
+    )
 
-        with placeholder.container():
-            # 2024-06-19 19:13:09.467814
-            time_since_last_sample = datetime.now() - datetime.strptime(
-                df["TIMESTAMP"].iloc[-1], "%Y-%m-%d %H:%M:%S.%f"
+    # Calculate KPIs
+    element_surface_temp = np.mean(df["HEATING_SURFACE_TEMP"].iloc[-2:])
+    avg_element_surface_temp = np.mean(df["HEATING_SURFACE_TEMP"].iloc[-20:])
+
+    climate_temp = np.mean(df["CLIMATE_TEMP"].iloc[-2:])
+    avg_climate_temp = np.mean(df["CLIMATE_TEMP"].iloc[-20:])
+
+    climate_humidity = np.mean(df["CLIMATE_HUMIDITY"].iloc[-2:])
+    avg_climate_humidity = np.mean(df["CLIMATE_HUMIDITY"].iloc[-20:])
+
+    soil_moisture = np.mean(df["SOIL_MOISTURE"].iloc[-2:])
+    avg_soil_moisture = np.mean(df["SOIL_MOISTURE"].iloc[-20:])
+
+    fluid_injected = np.mean(df["FLUID_INJECTED"].iloc[-2:])
+    avg_fluid_injected = np.mean(df["FLUID_INJECTED"].iloc[-20:])
+
+    cumulative_fluid_injected = np.mean(df["FLUID_INJECTED_CUMULATIVE"].iloc[-2:])
+    avg_cumulative_fluid_injected = np.mean(df["FLUID_INJECTED_CUMULATIVE"].iloc[-20:])
+
+    with placeholder.container():
+        time_since_last_sample = datetime.now() - datetime.strptime(df["TIMESTAMP"].iloc[-1], "%Y-%m-%d %H:%M:%S.%f")
+        if time_since_last_sample.total_seconds() > 60:
+            st.warning("Datacollection failure. You are watching outdated data.")
+
+        left_image, webcam_col, water_panel = st.columns(3)
+        with webcam_col:
+            if get_camera().started():
+                last_frame = get_next_frame()
+                st.image(last_frame, caption="Livefeed")
+            else:
+                st.warning("Camera not started or malfunctioning.")
+        with left_image:
+            st.image(str(root / "Nietzsche_metPistool.jpg"), width=420, caption="Nature or notsure")
+        with water_panel:
+            pass  # Water panel code can go here
+
+        # Create tabs for different panels
+        tab_labels = ["Element Surface Temperature", "Climate Temperature", "Climate Humidity", "Soil Moisture",
+                      "Fluids"]
+        tabs = st.tabs(tab_labels)
+
+        # Display content based on selected tab
+        with tabs[0]:
+            display_kpi(
+                title="Element Surface Temperature",
+                current_value=element_surface_temp,
+                avg_value=avg_element_surface_temp,
+                y_data=["HEATING_SURFACE_TEMP"],
+                df=df,
+                ylabel="Element Surface Temperature",
+                panel_id="element_surface_temp",
+                time_range=time_range
             )
-            if time_since_last_sample.total_seconds() > 60:
-                st.warning(f"Datacollection failure. You are watching outdated data.")
-
-            left_image, webcam_col, water_panel = st.columns(3)
-            with webcam_col:
-                # todo: some memory leaking is happening here
-                # likely the array is kept referenced within st.image
-                # on gh,
-                if get_camera().started():
-                    last_frame = get_next_frame()
-                    st.image(last_frame, caption="Livefeed")
-            with left_image:
-                st.image(
-                    str(root / "Nietzsche_metPistool.jpg"), width=420, caption="nature or notsure"
-                )
-            with water_panel:
-                # st.image("./pexels-photo-28924.jpg", width=500, caption="Nature")
-                with st.container():
-                    left_column, middle_column, right_column = st.columns(3)
-
-                    def start_injection(amount: int):
-                        print("starting injection")
-                        api._pyroClaimOwnership()
-                        # reply = api.request(module="FLU", function="waterNow", args=[f"{amount}"])
-                        reply = api.request(module="MTC", function="getMetrics")
-                        st.popover(label=str(reply))
-
-                    with left_column:
-                        pass
-                    with right_column:
-                        number = st.number_input("Amount in milliliter", value=100, max_value=500)
-
-                        if st.button("Water plants", on_click=start_injection, args=[number]):
-                            pass
-                        else:
-                            pass
-
-            # create three columns
-            kpi1, kpi2 = st.columns(2)
-
-            # fill in those three columns with respective metrics or KPIs
-            kpi1.metric(
-                label="Element surface temperature",
-                value=round(element_surface_temp, 2),
-                delta=round(element_surface_temp - avg_element_surface_temp, 2),
+        with tabs[1]:
+            display_kpi(
+                title="Climate Temperature",
+                current_value=climate_temp,
+                avg_value=avg_climate_temp,
+                y_data=["CLIMATE_TEMP", "HEATING_SETPOINT", "AMBIENT_TEMP"],
+                df=df,
+                ylabel="Climate Temperature",
+                panel_id="climate_temp",
+                time_range=time_range
             )
-            kpi2.metric(
-                label="Climate temperature",
-                value=round(climate_temp, 2),
-                delta=round(climate_temp - avg_climate_temp, 2),
+        with tabs[2]:
+            display_kpi(
+                title="Climate Humidity",
+                current_value=climate_humidity,
+                avg_value=avg_climate_humidity,
+                y_data=["CLIMATE_HUMIDITY", "CLIMATE_FAN", "CLIMATE_HUMIDITY_SETPOINT"],
+                df=df,
+                ylabel="Climate Humidity",
+                panel_id="climate_humidity",
+                time_range=time_range
+            )
+        with tabs[3]:
+            display_kpi(
+                title="Soil Moisture",
+                current_value=soil_moisture,
+                avg_value=avg_soil_moisture,
+                y_data=["SOIL_MOISTURE", "SOIL_MOISTURE_SETPOINT"],
+                df=df,
+                ylabel="Soil Moisture",
+                panel_id="soil_moisture",
+                time_range=time_range
+            )
+        with tabs[4]:
+            display_kpi(
+                title="Fluids",
+                current_value=fluid_injected,
+                avg_value=avg_fluid_injected,
+                y_data=["FLUID_INJECTED", "FLUID_INJECTED_CUMULATIVE", "FLUID_EFFECT"],
+                df=df,
+                ylabel="Fluid injected",
+                panel_id="fluids",
+                time_range=time_range
             )
 
-            fig_col1, fig_col2 = st.columns(2)
-            with fig_col1:
-                st.markdown("### Element surface temperature")
-                fig1 = px.scatter(
-                    data_frame=df, y="HEATING_SURFACE_TEMP", x="TIMESTAMP"
-                )
-                st.write(fig1)
-            with fig_col2:
-                st.markdown("### Climate temperature")
-                fig2 = px.line(
-                    data_frame=df,
-                    y=["CLIMATE_TEMP", "HEATING_SETPOINT", "AMBIENT_TEMP"],
-                    x="TIMESTAMP",
-                )
-                st.write(fig2)
-
-            kpi3, kpi4 = st.columns(2)
-            kpi3.metric(
-                label="Climate humidity",
-                value=round(climate_humidity, 2),
-                delta=round(climate_humidity - avg_climate_humidity, 2),
-            )
-            kpi4.metric(
-                label="Soil moisture",
-                value=round(soil_moisture, 2),
-                delta=round(soil_moisture - avg_soil_moisture, 2),
-            )
-
-            fig_col3, fig_col4 = st.columns(2)
-            with fig_col3:
-                st.markdown("### Climate  humidity")
-                fig3 = px.line(
-                    data_frame=df, y=["CLIMATE_HUMIDITY", "CLIMATE_FAN", "CLIMATE_HUMIDITY_SETPOINT"], x="TIMESTAMP"
-                )
-                st.write(fig3)
-            with fig_col4:
-                st.markdown("### Soil moisture")
-                fig4 = px.line(
-                    data_frame=df,
-                    y=["SOIL_MOISTURE", "SOIL_MOISTURE_SETPOINT"],
-                    x="TIMESTAMP",
-                )
-                st.write(fig4)
-
-            st.markdown("### Detailed Data View")
+        # Detailed data view at the bottom
+        with st.expander("Detailed Data View", expanded=False):
             st.dataframe(df, use_container_width=True)
-            time.sleep(display_interval)
 
 
-# https://github.com/streamlit/streamlit/issues/6354
-# memory_limit(percentage=80)
+def do_streamlit_session(root: Path, api_id: str):
+    """Run the Streamlit session."""
 
+    Logger.debug("Client connected")
 
-import yaml
-from yaml.loader import SafeLoader
+    auth_file: Optional[Path] = root / "auth.yml" if (root / "auth.yml").exists() else None
 
-
-def do_streamlit_session(root: Path, api_id: str, auth_file: Optional[Path] = None):
-    authenticator = None
     if auth_file:
-        with open(auth_file) as file:
-            auth_config = yaml.load(file, Loader=SafeLoader)
+        Logger.debug(f"Loading authorization file {auth_file}")
 
-        authenticator = stauth.Authenticate(
-            auth_config["credentials"],
-            auth_config["cookie"]["name"],
-            auth_config["cookie"]["key"],
-            auth_config["cookie"]["expiry_days"],
-            auth_config["pre-authorized"],
-        )
+        show_login_form(auth_file)
 
-        if not st.session_state["authentication_status"]:
-            name, authentication_status, username = authenticator.login()
+        if st.session_state["authentication_status"]:
+            Logger.debug("Session authenticated.")
+            api = PyroServer.proxy_for(f"PYRONAME:{api_id}")
+            load_page(root, api)
     else:
-        log.warning("No auth_file passed in. No authentication will be enforced.")
-
-    # try:
-    #     email_of_registered_user, username_of_registered_user, name_of_registered_user = authenticator.register_user(pre_authorization=False)
-    #     if email_of_registered_user:
-    #         st.success('User registered successfully')
-    # except Exception as e:
-    #     st.error(e)
-
-    # if st.session_state["authentication_status"]:
-    #     try:
-    #         if authenticator.reset_password(st.session_state["username"]):
-    #             st.success('Password modified successfully')
-    #     except Exception as e:
-    #         st.error(e)
-
-    # with open(auth_file, "w") as file:
-    #     yaml.dump(auth_config, file, default_flow_style=False)
-
-    # if st.session_state["authentication_status"]:
-    #     try:
-    #         if authenticator.update_user_details(st.session_state["username"]):
-    #             st.success('Entries updated successfully')
-    #     except Exception as e:
-    #         st.error(e)
-
-    if not auth_file or st.session_state["authentication_status"]:
-        # authenticator.logout()
-        # st.write(f'Welcome *{st.session_state["name"]}*')
-
+        # Initialize API with provided api_id
+        Logger.debug("No authentication: no authorization file was provided.")
         api = PyroServer.proxy_for(f"PYRONAME:{api_id}")
-        load_page(root=root, api=api, display_interval=10, frames_per_visit=300, authenticator=authenticator)
-        st.rerun()
-    elif st.session_state["authentication_status"] is False:
-        st.error("Username/password is incorrect")
-    elif st.session_state["authentication_status"] is None:
-        st.warning("Please enter your username and password")
+        load_page(root, api)
 
-    # load_page(display_interval=10,frames_per_visit=30)
-
-    # try:
-    #     load_page(display_interval=10,frames_per_visit=30)
-    # except MemoryError:
-    #     print("Caught memory error")
-    # except:
-    #     print("Caught unknown exception")
-
-    log.debug("End of session. Scheduling rerun.")
-
-
-import typer
 
 if __name__ == "__main__":
     typer.run(do_streamlit_session)

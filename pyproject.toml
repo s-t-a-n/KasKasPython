@@ -27,6 +27,7 @@ pyserial = "^3.5"
 zmq = "^0.0.0"
 pyro5 = "^5.15"
 rich = "^13.7.1"
+streamlit-extras = "^0.4.3"
 
 [tool.poetry.dev-dependencies]
 Pygments = ">=2.10.0"

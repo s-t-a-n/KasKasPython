@@ -1,3 +1,5 @@
+import string
+
 from _kaskas.log import log
 from serial import SerialTimeoutException
 from serial import SerialException
@@ -7,62 +9,18 @@ from pathlib import Path
 from enum import Enum, Flag, auto
 from multiprocessing.synchronize import Lock
 from multiprocessing import Lock as createLock
+
 from multiprocessing import Queue
-
+from queue import Empty as QueueEmpty
 from threading import Thread, Event
-
 from io import RawIOBase
 from typing import TextIO
-
-from _kaskas.utils.io_serial import open_next_available_serial
-
 import Pyro5.api
 
-
-class Datalink:
-    """ Responsible for untangling log from api information passing over serial"""
-
-    _flag_shutdown: Event
-    _flag_up_and_running: Event
-
-    _thread: Thread
-
-    _io: RawIOBase
-    _outgoing: Queue[bytes]
-    _log: Queue[str]
-    _api: Queue[str]
-
-    def __init__(self, io: RawIOBase):
-        self._flag_shutdown = Event()
-        self._flag_up_and_running = Event()
-        self._thread = Thread(target=self._runner)
-        self._io = io
-        self._outgoing = Queue()
-        self._log = Queue()
-        self._api = Queue()
-
-        import os
-        os.set_blocking(io.fileno(), False)
-
-    def write_line(self, line: str):
-        self._outgoing.put(line.encode("utf-8"))
-
-    def next_log_line(self, block: bool = False) -> Optional[str]:
-        return self._log.get(block=block)
-
-    def next_api_line(self, block: bool = False) -> Optional[str]:
-        return self._api.get(block=block)
-
-    def _runner(self):
-        while not self._flag_shutdown.is_set():
-            while outgoing := self._outgoing.get(block=False):
-                self._io.write(outgoing)
-            for line in [l.decode("utf-8").replace("\r", "").replace("\n", "") for l in self._io.readlines() if
-                         len(l) > 0]:
-                if line.startswith("!"):
-                    self._log.put(line)
-                else:
-                    self._api.put(line)
+from _kaskas.utils.io_serial import open_next_available_serial
+from _kaskas.utils.filelock import FileLock
+from _kaskas.datalink_serial import Datalink as DatalinkSerial
+from _kaskas.dialect import Dialect
 
 
 class Response:
@@ -92,120 +50,79 @@ class Response:
         return f"{status}: {self.arguments} "
 
 
-class Operator(Enum):
-    REQUEST = ":"
-    RESPONSE = "<"
-
-
 @Pyro5.api.expose
 class KasKasAPI:
     """_summary_"""
 
-    _log_file: TextIO
-    _io: Optional[RawIOBase]
-    _lock: Lock
+    _response_timeout: float
+    _dl: DatalinkSerial
 
-    def __init__(self, log_filename: Path, io: RawIOBase = None) -> None:
-        self._log_file = open(log_filename, mode="a+")
-        self._io = io
-        self._lock = createLock()
+    def __init__(self, datalink: DatalinkSerial, response_timeout: float = 3.0) -> None:
+
+        self._response_timeout = response_timeout
+        self._dl = datalink
+        self._dl.start()
 
     @staticmethod
     def cannonical_name() -> str:
         return "kaskas.api"
 
-    @property
-    def io(self) -> Optional[RawIOBase]:
-        if self._io is None:
-            try:
-                self._io = open_next_available_serial(baudrate=115200, timeout=1.5)
-            except SerialException:
-                pass
-                log.info("Failed to open serial port")
-        return self._io
-
-    @property
-    def is_connected(self) -> bool:
-        return bool(self.io)
-
     def request(
-            self, module: str, function: str, args: Optional[list[str]] = None
+            self, module: str, function: Optional[str], args: Optional[list[str]] = None
     ) -> Optional[Response]:
-        with self._lock:
-            if not self.is_connected:
-                return Response(Response.Status.COMMUNICATION_ERROR, "Not connected")
+        if not self._dl.is_connected:
+            return Response(Response.Status.COMMUNICATION_ERROR, ["Not connected"])
 
-            self._flush()
-
+        request_line = None
+        if module == "?":  # this is a request to print usage
+            request_line = f"{Dialect.Operator.REQUEST_PRINT_USAGE.value}\n"
+        else:
             argument_substring = ":" + "|".join(args) if args else ""
-            request_line = f"{module}{str(self.Operator.REQUEST.value)}{function}{argument_substring}\r"
-            # print(f"writing request line {request_line}")
-            self.io.write(bytearray(request_line, "ascii"))
-            self.io.flush()
-            return self._read_response_for(module)
+            request_line = f"{module}{str(Dialect.Operator.REQUEST.value)}{function}{argument_substring}\n"  # \r\n ?
+        # print(f"writing request line {request_line}")
+        self._dl.write_line(request_line)
+        return self._read_response_for(module)
 
-    def _read_response_for(self, module: str, max_skipable_lines: int = 32) -> Response:
-        while max_skipable_lines > 0:
-            try:
-                raw_line = (
-                    self.io.readline()
-                    .decode("utf-8")
-                    .replace("\r", "")
-                    .replace("\n", "")
-                )
-                # print(f"_read_response_for: {raw_line}")
-            except SerialTimeoutException:
-                return Response(Response.Status.TIMEOUT)
+    def _read_response_for(self, module: str) -> Response:
+        raw_line = self._dl.next_api_line(timeout=self._response_timeout)
+        # assert raw_line and len(raw_line) > 0, f"datalink gave illegal response: {raw_line}"
 
-            correct_reply_header = module + str(Operator.RESPONSE.value)
-            if raw_line.startswith(correct_reply_header):
-                line_reply_header_stripped = raw_line[len(correct_reply_header):]
-                remainder = line_reply_header_stripped.split(":")
+        if not raw_line:
+            return Response(Response.Status.TIMEOUT)
 
-                if len(remainder) < 2:
-                    log.error(f"couldnt find return value for reply: {raw_line}")
-                    continue
+        correct_reply_header = f"{module}{Dialect.Operator.RESPONSE.value}"
+        if not raw_line.startswith(correct_reply_header):
+            log.error(
+                f"API: Request for {module} failed, ill conceived reply: {raw_line}, (correct header: {correct_reply_header})")
+            return Response(Response.Status.BAD_RESPONSE)
 
-                return_status = int(remainder[0])
-                values_line = "".join(remainder[1:])
+        remainder = raw_line[len(correct_reply_header):]
+        remainder_splitted = remainder.split(":")
 
-                values = values_line.split("|")[:-1]
-                # print(f"Response: {raw_line} for values_line {values_line}")
-                # print(f"found values {values}")
-                return Response(
-                    status=Response.Status(return_status), arguments=values
-                )
-            else:
-                self._print_debug_line(raw_line)
-                max_skipable_lines -= 1
+        try:
+            return_status = Response.Status[remainder_splitted[0]]
+        except KeyError:
+            raise ValueError(f"Unknown status: {return_status}")
 
-        log.error(
-            f"Request for {module} failed, couldnt find a respons in {max_skipable_lines} times"
+        remainder = remainder[len(remainder_splitted[0]) + 1:]  # skip return code and seperator
+
+        if module == "?":  # this is a request for usage
+            values = ["".join(remainder)]  # without statuscode
+        else:  # this is a reply to an api request
+            remainder_splitted = remainder.split("|")
+            values = remainder_splitted if len(remainder_splitted) > 1 else [remainder]
+
+            # print(f"_read_response_for: returning values: {values}")
+        return Response(
+            status=Response.Status(return_status), arguments=values
         )
-        return Response(Response.Status.BAD_RESPONSE)
 
-    def _flush(self) -> None:
-        # print("flush")
-        while self.io.in_waiting > 0:
-            try:
-                # print(f"stuck reading got bytes: {self._serial.in_waiting}")
-                line = (
-                    self.io.readline()
-                    .decode("utf-8")
-                    .replace("\r", "")
-                    .replace("\n", "")
-                )
-                # print("unstuck reading")
-            except SerialTimeoutException:
-                line = self.io.read_all()
-            self._print_debug_line(line + "\n")
-
-    def _print_debug_line(self, line: str) -> None:
-        line = line.strip().replace("\r", "").replace("\n", "")
-        if len(line) > 0:
-            # log.info(f"DBG: {line}")
-            self._log_file.write(f"{datetime.now()}: {line}\n")
-            self._log_file.flush()
+    # def _print_debug_line(self, line: str) -> None:
+    #     line = line.strip().replace("\r", "").replace("\n", "")
+    #     if len(line) > 0:
+    #         # log.info(f"DBG: {line}")
+    #         self._log_file.write(f"{datetime.now()}: {line}\n")
+    #         # self._log_file.flush()
 
 
 def response_dict_to_response(response, d):

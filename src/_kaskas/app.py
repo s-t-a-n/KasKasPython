@@ -139,7 +139,7 @@ def app_header() -> str:
     return s
 
 
-def inject_kaskas(app: typer.Typer, daemon: Daemon):
+def inject_kaskas(app: typer.Typer, daemon: Daemon, progress: Progress):
     """Inject all typer entrypoints."""
 
     @app.command("prompt")
@@ -149,6 +149,8 @@ def inject_kaskas(app: typer.Typer, daemon: Daemon):
             request: Annotated[str, typer.Argument(help="module:command:arg1|arg2|..")] = None,
     ):
         """[blue]Set[/blue] a value for a key."""
+
+        progress.stop()
 
         def print_help():
             print(f"Request should be formatted as 'MODULE:COMMAND:ARG|ARG'")
@@ -161,21 +163,36 @@ def inject_kaskas(app: typer.Typer, daemon: Daemon):
                 return
 
             arrow_up_keycode = "\x1b[A"
-            if input == arrow_up_keycode:
+            if input == arrow_up_keycode:  # redo last command
                 input = history[-1]
 
-            args = input.split(":")
-            if len(args) < 2:
-                print_help()
-                return
-            response = daemon.api.request(module=args[0], function=args[1], args=args[2:])
-            print(str(response))
-            history.append(input)
+            components = None
+
+            def process_api_request(input: str):
+                components = input.split(":")
+                if len(components) < 2:  # not enough components to built request
+                    print_help()
+                    return
+                response = daemon.api.request(module=components[0], function=components[1], args=components[2:])
+                print(str(response))
+                history.append(input)
+
+            def process_print_usage_request(input: str):
+                components = ["?", "", ""]
+                response = daemon.api.request(module=components[0], function=components[1], args=components[2:])
+                print(response.arguments)
+                print(str(response.arguments[0]))
+
+            if input == "?":  # this is a request to print usage
+                process_print_usage_request(input)
+            else:
+                process_api_request(input)
 
         daemon.launch_api(remote=remote, remote_host=remote_host)
 
         if request:
             process_request(request)
+            daemon.shutdown()
             return
 
         print("[bold red]KasKas[/bold red] prompt. Enter 'q' to quit, Press ↑ and Enter to repeat last command");
@@ -188,24 +205,19 @@ def inject_kaskas(app: typer.Typer, daemon: Daemon):
                      remote_host: Annotated[str, typer.Option(help=".")] = None, ):
         """[blue]Set[/blue] a value for a key."""
 
-        with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                transient=True,
-        ) as progress:
-            p = progress.add_task(description="Launching API...", total=None)
-            daemon.launch_api(remote=remote, remote_host=remote_host)
-            progress.stop_task(p)
+        p = progress.add_task(description="Launching API...", total=None)
+        daemon.launch_api(remote=remote, remote_host=remote_host)
+        progress.remove_task(p)
 
-            p = progress.add_task(description="Launching collector...", total=None)
-            daemon.launch_collector()
-            progress.stop_task(p)
+        p = progress.add_task(description="Launching collector...", total=None)
+        daemon.launch_collector()
+        progress.remove_task(p)
 
-            p = progress.add_task(description="Launching web frontend...", total=None)
-            daemon.launch_webapp()
-            progress.stop_task(p)
+        p = progress.add_task(description="Launching web frontend...", total=None)
+        daemon.launch_webapp()
+        progress.remove_task(p)
 
-        print("Daemon [bold green] ok[/bold green]. Running...")
+        p = progress.add_task(description="KasKas is [bold green]running[/bold green]...", total=None)
         daemon.wait()
 
     @app.command("user-directory", help="Prints user directory")
@@ -216,6 +228,8 @@ def inject_kaskas(app: typer.Typer, daemon: Daemon):
 class Application(metaclass=Singleton):
     _daemon: Daemon
 
+    _progress: Progress
+
     def __init__(self, root: Path = app_userdir(), loglevel: str = "WARNING"):
         self.setup_logging(loglevel)
 
@@ -224,14 +238,24 @@ class Application(metaclass=Singleton):
 
         self._daemon = Daemon(root=root)
 
+        self._progress = Progress(SpinnerColumn(),
+                                  TextColumn("[progress.description]{task.description}"),
+                                  transient=True)
+        self._progress.start()
+
         import signal
         import sys
 
         def signal_handler(sig, frame):
+            for t in self._progress.tasks:
+                self._progress.remove_task(t.id)
+
+            p = self._progress.add_task(description="KasKas is [bold red]shutting down[/bold red]...", total=None)
             self._daemon.shutdown()
             sys.exit(0)
 
-        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGINT, signal_handler)  # Handle Ctrl-C signal
+        signal.signal(signal.SIGTERM, signal_handler)  # Handle termination signal
 
     @staticmethod
     def setup_logging(loglevel: str):
@@ -249,7 +273,7 @@ class Application(metaclass=Singleton):
     @property
     def _typer_app(self) -> Typer:
         app = Typer(no_args_is_help=True, help=app_header(), rich_markup_mode="rich")
-        inject_kaskas(app=app, daemon=self._daemon)
+        inject_kaskas(app=app, daemon=self._daemon, progress=self._progress)
         return app
 
     def run(self):

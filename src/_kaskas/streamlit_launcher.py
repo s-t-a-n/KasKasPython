@@ -102,6 +102,8 @@ class StreamlitLauncher:
 
         while not self._flag_shutdown.is_set() and self._thread.is_alive():
             for line in streamlit.stdout:
+                if "inotify_buffer" in line:  # ignore streamlit app's commands for adjusting terminal
+                    continue
                 log_line("Streamlit", line)
             for line in streamlit_memoryguard.stdout:
                 log_line("Streamlit memoryguard", line)

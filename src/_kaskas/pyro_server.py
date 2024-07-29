@@ -30,6 +30,8 @@ class PyroServer:
     _pyrodaemon: Pyro5.api.Daemon
     _nameserver: Pyro5.nameserver.NameServerDaemon
 
+    Proxy = Pyro5.api.Proxy
+
     def __init__(self):
         self._flag_shutdown = Event()
         self._flag_up_and_running = Event()
@@ -52,8 +54,9 @@ class PyroServer:
         return server_uri
 
     def wait(self):
-        assert self.is_started, "Cannot wait fpr pyro server which is not started"
-        self._thread.join()
+        # assert self.is_started, "Cannot wait fpr pyro server which is not started"
+        if self.is_started:
+            self._thread.join()
 
     @staticmethod
     def proxy_for(name: str) -> Pyro5.api.Proxy:
@@ -77,7 +80,7 @@ class PyroServer:
     def stop(self, blocking: bool = False) -> None:
         self._flag_shutdown.set()
         if blocking:
-            self._thread.join()
+            self.wait()
 
     def _runner(self):
         # start a name server with broadcast server
@@ -101,7 +104,10 @@ class PyroServer:
         self._flag_up_and_running.clear()
 
         # cleanup
+        log.debug("PyroServer: stopping nameserver..")
         nameserver_daemon.close()
+        log.debug("PyroServer: stopping broadcast server..")
         broadcast_server.close()
+        log.debug("PyroServer: stopping daemon..")
         self._pyrodaemon.close()
-        log.info("PyroServer shut down")
+        log.debug("PyroServer shut down")
