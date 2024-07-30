@@ -173,13 +173,13 @@ def inject_kaskas(app: typer.Typer, daemon: Daemon, progress: Progress):
                 if len(components) < 2:  # not enough components to built request
                     print_help()
                     return
-                response = daemon.api.request(module=components[0], function=components[1], args=components[2:])
+                response = daemon.api.request(module=components[0], command=components[1], args=components[2:])
                 print(str(response))
                 history.append(input)
 
             def process_print_usage_request(input: str):
                 components = ["?", "", ""]
-                response = daemon.api.request(module=components[0], function=components[1], args=components[2:])
+                response = daemon.api.request(module=components[0], command=components[1], args=components[2:])
                 print(response.arguments)
                 print(str(response.arguments[0]))
 

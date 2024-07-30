@@ -92,7 +92,7 @@ class TimeSeriesCollector:
                 writer = csv.writer(file)
 
             log.debug("Setting up timeseries collection")
-            columns_response = self._api.request(module="DAQ", function="getTimeSeriesColumns")
+            columns_response = self._api.request(module="DAQ", command="getTimeSeriesColumns")
             if not columns_response or not all(
                     [
                         str.isalpha(s) and str.isupper(s)
@@ -120,7 +120,7 @@ class TimeSeriesCollector:
                     return
 
             log.debug("Starting timeseries collection loop")
-            while timeseries_response := self._api.request(module="DAQ", function="getTimeSeries"):
+            while timeseries_response := self._api.request(module="DAQ", command="getTimeSeries"):
                 collect_to(timeseries_response.arguments, writer)
                 file.flush()
                 time.sleep(self._sampling_interval)

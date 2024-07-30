@@ -45,6 +45,9 @@ class Response:
     def __bool__(self) -> bool:
         return bool(self.status & (self.Status.OK | self.Status.BAD_INPUT | self.Status.BAD_RESULT))
 
+    def __repr__(self) -> str:
+        return f"{self.status.name}: {self.arguments if len(self.arguments) > 1 else self.arguments[0]} "
+
     def __str__(self) -> str:
         status = f"[bold green]{self.status.name}[/bold green]" if self.status == self.Status.OK else f"[bold red]{self.status.name}[/bold red]"
         return f"{status}: {self.arguments} "
@@ -68,7 +71,7 @@ class KasKasAPI:
         return "kaskas.api"
 
     def request(
-            self, module: str, function: Optional[str], args: Optional[list[str]] = None
+            self, module: str, command: Optional[str], args: Optional[list[str]] = None
     ) -> Optional[Response]:
         if not self._dl.is_connected:
             return Response(Response.Status.COMMUNICATION_ERROR, ["Not connected"])
@@ -78,10 +81,26 @@ class KasKasAPI:
             request_line = f"{Dialect.Operator.REQUEST_PRINT_USAGE.value}\n"
         else:
             argument_substring = ":" + "|".join(args) if args else ""
-            request_line = f"{module}{str(Dialect.Operator.REQUEST.value)}{function}{argument_substring}\n"  # \r\n ?
+            request_line = f"{module}{str(Dialect.Operator.REQUEST.value)}{command}{argument_substring}\n"  # \r\n ?
         # print(f"writing request line {request_line}")
         self._dl.write_line(request_line)
         return self._read_response_for(module)
+
+    def map(self, attrs: dict[str, list[str]]) -> dict[str, Optional[str]]:
+        """ Dictionary containing  """
+        try:
+
+            # query all values for the given Dict[module, command]
+            # eg. attr = { "Fluids", ["timeSinceLastDosis", "isOutOfWater"] }
+            d = {f"{k}:{v}": self.request(k, v).arguments for k, v_list in attrs.items() for v in v_list}
+
+            validated = all([bool(k) for k, v in d.items()])
+            if not validated:
+                log.warning(f"Failed retrieving datamap from api: Missing elements: {d}")
+            return d if validated else None
+        except Exception as e:
+            log.warning(f"Failed retrieving datamap from api: {e}")
+            return {}
 
     def _read_response_for(self, module: str) -> Response:
         raw_line = self._dl.next_api_line(timeout=self._response_timeout)

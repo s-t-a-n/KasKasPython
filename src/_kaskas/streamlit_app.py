@@ -10,15 +10,22 @@ import typer
 import yaml
 from yaml.loader import SafeLoader
 from typing import Optional
+from streamlit_extras.bottom_container import bottom
+from streamlit_extras.dataframe_explorer import dataframe_explorer
+from streamlit_extras.grid import grid
+from streamlit_extras.let_it_rain import rain
 from _kaskas.pyro_server import PyroServer
 from _kaskas.utils.filelock import FileLock
 from _kaskas.datacollector import TimeSeriesCollector
+from _kaskas.kaskas_api import KasKasAPI
 
 st.set_page_config(page_title="KasKas !", page_icon="🌱", layout="wide")
 
-# Initialize session state for authentication
+# Initialize session state for authentication and chat messages
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
 
 def show_login_form(auth_file: Path):
@@ -79,6 +86,14 @@ def get_camera() -> Camera:
     return Camera()
 
 
+@st.cache_resource(ttl=timedelta(seconds=1))
+def map(_api: KasKasAPI | PyroServer.Proxy) -> dict[str, str]:
+    queries = {
+        "Fluids": ["timeSinceLastDosis", "isOutOfWater", "injectionEffect"],
+    }
+    return _api.map(queries)
+
+
 @st.cache_resource(ttl=timedelta(seconds=10))
 def get_next_frame() -> np.ndarray:
     next_frame = get_camera().capture_array()
@@ -97,10 +112,8 @@ def get_next_frame() -> np.ndarray:
 
 
 @st.cache_resource(ttl=timedelta(seconds=1))
-def get_next_dataframe(csv_path: Path, csv_lock_path: Path) -> pd.DataFrame:
-    lock = FileLock(csv_lock_path)
-    with lock:
-        return pd.read_csv(csv_path, low_memory=True)
+def get_next_dataframe(csv_path: Path) -> pd.DataFrame:
+    return pd.read_csv(csv_path, low_memory=True)
 
 
 def filter_data(df: pd.DataFrame, hours: int) -> pd.DataFrame:
@@ -115,7 +128,7 @@ def filter_data(df: pd.DataFrame, hours: int) -> pd.DataFrame:
 def display_kpi(title: str, current_value: float, avg_value: float, y_data: list, df: pd.DataFrame, ylabel: str,
                 panel_id: str, time_range: str):
     """Display a KPI panel with a title, current reading, and a graph."""
-    with st.container(border=True):
+    with st.container():
         # KPI display
         st.markdown(f"### {title}")
         kpi_col1, kpi_col2 = st.columns([1, 3])
@@ -140,13 +153,12 @@ def display_kpi(title: str, current_value: float, avg_value: float, y_data: list
             st.error("Failed to create plot.")
 
 
-def load_page(root: Path, api: PyroServer | PyroServer.Proxy):
+def load_page(root: Path, api: KasKasAPI | PyroServer.Proxy):
     """Load and display the main page with real-time updates."""
     placeholder = st.empty()
 
     # Fetch the dataframe once for the whole page
-    df_lock_path = root / TimeSeriesCollector.timeseries_lock_filename
-    df = get_next_dataframe(root / TimeSeriesCollector.timeseries_filename, df_lock_path)
+    df = get_next_dataframe(root / TimeSeriesCollector.timeseries_filename)
 
     if df.empty:
         st.warning("No data available.")
@@ -194,7 +206,7 @@ def load_page(root: Path, api: PyroServer | PyroServer.Proxy):
         with left_image:
             st.image(str(root / "Nietzsche_metPistool.jpg"), width=420, caption="Nature or notsure")
         with water_panel:
-            pass  # Water panel code can go here
+            display_water_panel(api)  # Call the water panel function here
 
         # Create tabs for different panels
         tab_labels = ["Element Surface Temperature", "Climate Temperature", "Climate Humidity", "Soil Moisture",
@@ -258,9 +270,61 @@ def load_page(root: Path, api: PyroServer | PyroServer.Proxy):
                 time_range=time_range
             )
 
+        # API chat interface
+        with st.expander("API", expanded=True):
+            display_api_panel(api)
+
         # Detailed data view at the bottom
         with st.expander("Detailed Data View", expanded=False):
             st.dataframe(df, use_container_width=True)
+
+
+def display_water_panel(api: KasKasAPI | PyroServer.Proxy):
+    """Display the water panel with controls and information."""
+    out_of_water = api.request(module="Fluids", command="isOutOfWater", args=[""]).arguments[0] == "True"
+    injection_effect = api.request(module="Fluids", command="injectionEffect", args=[""]).arguments[0]
+    time_since_last_dosis = api.request(module="Fluids", command="timeSinceLastDosis", args=["h"]).arguments[0]
+
+    with st.container(border=True):
+        st.markdown(
+            """
+        <style>
+        button {
+            height: auto;
+            padding-left: 30px !important;
+            padding-right: 30px !important;
+            padding-top: 20px !important;
+            padding-bottom: 20px !important;
+        }
+        </style>
+        """,
+            unsafe_allow_html=True,
+        )
+
+        my_grid = grid(2, 2, vertical_align="bottom")
+        my_grid.slider("Amount to water (ml)", min_value=0, max_value=250, value=100, key="water_amount")
+        my_grid.button("Water Now", on_click=lambda: api.request(module="Fluids", command="waterNow",
+                                                                 args=[str(st.session_state.water_amount)]))
+        my_grid.markdown(f"**Time since last injection (h):** {time_since_last_dosis}")
+        my_grid.markdown(f"**Injection effect (ml/%):** {injection_effect}")
+
+        if out_of_water:
+            st.warning(f"Out of water")
+
+
+def display_api_panel(api: KasKasAPI | PyroServer.Proxy):
+    """Display the API panel. """
+    chat_input = st.text_input("Enter your command:")
+    if chat_input:
+        if chat_input == "?":
+            response = api.request("?", "?")
+        else:
+            module, command, *args = chat_input.split(":")
+            args = ":".join(args)
+            response = api.request(module, command, args)
+        st.session_state.messages.append(f"> {chat_input} -> {response.__repr__()}")
+    for message in st.session_state.messages:
+        st.code(message)
 
 
 def do_streamlit_session(root: Path, api_id: str):
